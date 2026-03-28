@@ -1,151 +1,169 @@
 import streamlit as st
 import os
 import tempfile
+import time
 from streamlit_mic_recorder import mic_recorder
 import google.generativeai as genai
+from elevenlabs import generate, set_api_key
 
-# --- INITIALIZE API ---
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
+# --- 1. INITIALIZE APIs & ASSETS ---
+# Ensure these are set in your Replit Secrets or Streamlit Secrets
+GEMINI_API_KEY = st.secrets["GEMINI_API_KEY"]
+ELEVEN_API_KEY = st.secrets["ELEVEN_API_KEY"]
+
 genai.configure(api_key=GEMINI_API_KEY)
+set_api_key(ELEVEN_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash-latest')
 
-# --- PAGE CONFIGURATION ---
+# --- 2. PAGE CONFIG ---
 st.set_page_config(page_title="Sathi-AI", page_icon="📻", layout="centered")
 
-# --- RETRO KEYBOARD & UI CSS ---
+# --- 3. THE "ELDER-FIRST" STYLING (Bilingual & Retro) ---
 st.markdown("""
     <style>
-    /* Main Background: Textured Wood */
-    .stApp {
-        background-color: #5c3a21;
-        background-image: url('https://www.transparenttextures.com/patterns/wood-pattern.png');
-    }
+    .stApp { background-color: #5c3a21; background-image: url('https://www.transparenttextures.com/patterns/wood-pattern.png'); }
+    .block-container { background-color: #f4ecd8; border-radius: 25px; padding: 30px; border: 5px solid #3e2723; box-shadow: 15px 15px 40px rgba(0,0,0,0.6); }
     
-    /* Ivory Console */
-    .block-container {
-        background-color: #f4ecd8;
-        border-radius: 25px;
-        padding: 30px;
-        box-shadow: 15px 15px 40px rgba(0,0,0,0.6);
-        border: 5px solid #3e2723;
-    }
-
     /* AAJ TAK RED HEADER */
-    .header-box {
-        background-color: #cc0000;
-        padding: 15px;
-        border-radius: 15px 15px 0 0;
-        border-bottom: 5px solid #800000;
-        margin-bottom: 20px;
-    }
-
-    /* TYPEWRITER KEY STYLE */
+    .header-box { background-color: #cc0000; padding: 15px; border-radius: 15px 15px 0 0; border-bottom: 5px solid #800000; margin-bottom: 20px; color: white; text-align: center; }
+    
+    /* 3D TYPEWRITER KEYS */
     .stButton>button {
         font-family: 'Courier New', Courier, monospace;
         font-weight: 900 !important;
         border-radius: 12px !important;
-        text-transform: uppercase;
-        transition: 0.1s;
-    }
-
-    /* THE MAIN VOICE BUTTON (Large Red) */
-    div[data-testid="stVerticalBlock"] > div:nth-child(4) .stButton>button {
-        height: 120px;
-        background: linear-gradient(145deg, #ff4d4d, #b30000) !important;
-        border-bottom: 10px solid #660000 !important;
-        font-size: 26px !important;
-        color: white !important;
-        margin-bottom: 20px;
-    }
-
-    /* THE KEYBOARD BUTTONS (Ivory Mechanical Keys) */
-    .keyboard-row .stButton>button {
         background: #fffdf5 !important;
         color: #3e2723 !important;
         border: 2px solid #d1c4a9 !important;
         border-bottom: 6px solid #bcae92 !important;
-        font-size: 22px !important;
-        height: 70px;
-        width: 100%;
-    }
-
-    .keyboard-row .stButton>button:active {
-        transform: translateY(4px);
-        border-bottom: 2px solid #bcae92 !important;
-    }
-
-    /* LANGUAGE TOGGLE (Navy Blue) */
-    .toggle-box .stButton>button {
-        background: #002d62 !important;
-        color: white !important;
-        border-bottom: 6px solid #001a39 !important;
         font-size: 20px !important;
+        height: 60px !important;
+        transition: 0.1s;
     }
+    .stButton>button:active { transform: translateY(4px); border-bottom: 2px solid #bcae92 !important; }
 
-    .instruction-text {
-        font-size: 22px;
-        color: #3e2723;
-        text-align: center;
-        font-weight: bold;
-        background: #fff9c4;
-        padding: 10px;
-        border-radius: 10px;
-        border: 1px dashed #8b4513;
-    }
+    /* LANGUAGE GATEWAY FADE EFFECT */
+    .fade-text { animation: fadeIn 2s; font-size: 24px; color: #cc0000; font-weight: bold; text-align: center; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    
+    .response-card { background: white; padding: 25px; border-radius: 15px; border-left: 12px solid #cc0000; box-shadow: 5px 5px 15px rgba(0,0,0,0.2); margin-top: 20px; font-size: 24px; color: #3e2723; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- APP HEADER ---
-st.markdown('<div class="header-box"><h1 style="color:white; text-align:center; margin:0;">📻 SATHI AI</h1></div>', unsafe_allow_html=True)
+# --- 4. SESSION STATE MANAGEMENT ---
+if 'lang' not in st.session_state: st.session_state.lang = None
+if 'text_input' not in st.session_state: st.session_state.text_input = ""
+if 'caps_on' not in st.session_state: st.session_state.caps_on = True
 
-# --- LANGUAGE STATE ---
-if 'lang' not in st.session_state:
-    st.session_state.lang = 'HINDI'
-if 'text_input' not in st.session_state:
-    st.session_state.text_input = ""
+# --- 5. STAGE 1: LANGUAGE GATEWAY (APNI BHASHA CHUNEIN) ---
+if st.session_state.lang is None:
+    st.markdown('<div class="header-box"><h1>SATHI AI</h1></div>', unsafe_allow_html=True)
+    st.markdown('<p class="fade-text">Pranam! Apni bhasha chunein (Choose Language)</p>', unsafe_allow_html=True)
+    
+    cols = st.columns(2)
+    with cols[0]:
+        if st.button("🇮🇳 हिंदी (Hindi)"): st.session_state.lang = "HINDI"; st.rerun()
+        if st.button("🇧🇩 বাংলা (Bengali)"): st.session_state.lang = "BENGALI"; st.rerun()
+    with cols[1]:
+        if st.button("🇬🇧 English"): st.session_state.lang = "ENGLISH"; st.rerun()
+        if st.button("🇮🇳 தமிழ் (Tamil)"): st.session_state.lang = "TAMIL"; st.rerun()
+    st.stop()
 
-# --- LANGUAGE TOGGLE ---
-st.markdown('<p class="instruction-text">Bhasha Chunein / Choose Language:</p>', unsafe_allow_html=True)
-col_t1, col_t2 = st.columns(2)
-with col_t1:
-    if st.button("🇮🇳 HINDI (हिंदी)", key="btn_hi"):
-        st.session_state.lang = 'HINDI'
-with col_t2:
-    if st.button("🇬🇧 ENGLISH", key="btn_en"):
-        st.session_state.lang = 'ENGLISH'
+# --- 6. STAGE 2: MAIN DASHBOARD ---
+st.markdown(f'<div class="header-box"><h1>📻 SATHI - {st.session_state.lang}</h1></div>', unsafe_allow_html=True)
+
+# Voice Recorder
+audio = mic_recorder(start_prompt="🎤 TAP TO TALK (BOLIYEIN)", stop_prompt="🛑 STOP (BAS)", key='recorder')
 
 st.write("---")
 
-# --- VOICE INPUT SECTION ---
-audio = mic_recorder(
-    start_prompt="🎤 BOL KAR BATAYEIN (TAP TO TALK)",
-    stop_prompt="🛑 BAS KAREIN (STOP)",
-    key='recorder'
-)
+# --- 7. BILINGUAL 3D KEYBOARD ---
+# Layouts based on your images
+hi_alphabet = [
+    ["अ", "आ", "इ", "ई", "उ", "ऊ"],
+    ["क", "ख", "ग", "घ", "ङ"],
+    ["च", "छ", "ज", "झ", "ञ"],
+    ["ट", "ठ", "ड", "ढ", "ण"],
+    ["त", "थ", "द", "ध", "न"],
+    ["प", "फ", "ब", "भ", "म"],
+    ["य", "र", "ल", "व", "श"],
+    ["ष", "स", "ह", "SPACE", "BACK"]
+]
 
-# --- KEYBOARD SECTION ---
-st.markdown(f'<p class="instruction-text">Yahan Likhein (Type here in {st.session_state.lang}):</p>', unsafe_allow_html=True)
+en_alphabet = [
+    ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"],
+    ["A", "S", "D", "F", "G", "H", "J", "K", "L"],
+    ["Z", "X", "C", "V", "B", "N", "M", "SPACE", "BACK"]
+]
 
-# Simulated Keyboard Rows
-if st.session_state.lang == 'HINDI':
-    keys = [["क", "ख", "ग", "घ"], ["च", "छ", "ज", "झ"], ["ट", "ठ", "ड", "ढ"]]
-else:
-    keys = [["A", "B", "C", "D"], ["E", "F", "G", "H"], ["I", "J", "K", "L"]]
+# Toggle Caps Lock for English
+if st.session_state.lang == "ENGLISH":
+    if st.button(f"⬆️ CAPS: {'ON' if st.session_state.caps_on else 'OFF'}"):
+        st.session_state.caps_on = not st.session_state.caps_on
+        st.rerun()
 
-for row in keys:
+current_layout = hi_alphabet if st.session_state.lang == "HINDI" else en_alphabet
+
+for row in current_layout:
     cols = st.columns(len(row))
-    for i, key in enumerate(row):
-        if cols[i].button(key, key=f"k_{key}"):
-            st.session_state.text_input += key
+    for i, char in enumerate(row):
+        display_char = char
+        if st.session_state.lang == "ENGLISH" and not st.session_state.caps_on and len(char) == 1:
+            display_char = char.lower()
+            
+        if cols[i].button(display_char, key=f"key_{char}_{i}"):
+            if char == "SPACE": st.session_state.text_input += " "
+            elif char == "BACK": st.session_state.text_input = st.session_state.text_input[:-1]
+            else: st.session_state.text_input += display_char
+            st.rerun()
 
-# Text Display Area
-user_text = st.text_input("Aapka Sandesh (Your Message):", value=st.session_state.text_input)
+# --- 8. THE BRAIN (REAL-TIME TEXT & SPEECH) ---
+user_msg = st.text_input("Aapka Sandesh:", value=st.session_state.text_input)
 
-if st.button("🚀 SAATHI KO BHEJEIN (SEND MESSAGE)"):
-    if user_text:
-        with st.spinner("Sathi soch raha hai..."):
-            # Here we send the text to Gemini
-            prompt = f"User says: {user_text}. Respond as Sathi (respectful elder companion) in {st.session_state.lang}."
-            response = model.generate_content(prompt)
-            st.success(response.text)
-            st.session_state.text_input = "" # Reset
+if audio or st.button("🚀 BHEJEIN (SEND)"):
+    input_source = ""
+    if audio:
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".wav") as tmp:
+            tmp.write(audio['bytes'])
+            input_source = genai.upload_file(path=tmp.name)
+    else:
+        input_source = user_msg
+
+    if input_source:
+        with st.spinner("Sathi is thinking..."):
+            # The "Respectful Son/Doctor" Persona
+            sys_msg = f"""
+            Persona: You are Sathi, a respectful son/grandson. 
+            Behavior: Speak with love and respect. Use 'Aap'. 
+            Language: Respond in {st.session_state.lang}. 
+            Special: If in Hindi/Bengali/Tamil, use English keywords for medical/tech terms (Hinglish style).
+            """
+            response = model.generate_content([sys_msg, input_source])
+            
+            # 1. SHOW TEXT
+            st.markdown(f'<div class="response-card">{response.text}</div>', unsafe_allow_html=True)
+            
+            # 2. SPEAK REAL-TIME
+            try:
+                # Multilingual v2 handles all 4 languages naturally
+                voice_data = generate(text=response.text, voice="Josh", model="eleven_multilingual_v2")
+                st.audio(voice_data, format="audio/mp3", autoplay=True)
+                
+                # 3. AUTO-REPEAT LOGIC
+                time.sleep(2)
+                repeat_text = {
+                    "HINDI": "Dobara sunne ke liye upar mic dabayein.",
+                    "ENGLISH": "To listen again, click the microphone above.",
+                    "BENGALI": "আবার শোনার জন্য ওপরের মাইকটি টিপুন।",
+                    "TAMIL": "மீண்டும் கேட்க, மேலே உள்ள மைக்ரோஃபோனை அழுத்தவும்."
+                }
+                st.info(repeat_text[st.session_state.lang])
+                repeat_audio = generate(text=repeat_text[st.session_state.lang], voice="Josh", model="eleven_multilingual_v2")
+                st.audio(repeat_audio, format="audio/mp3")
+                
+            except Exception as e:
+                st.error("Audio system is busy. Please read the message above.")
+
+if st.button("🔄 Change Language / Bhasha Badlein"):
+    st.session_state.lang = None
+    st.rerun()
