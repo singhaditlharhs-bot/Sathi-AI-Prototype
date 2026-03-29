@@ -24,10 +24,11 @@ if not c.fetchone():
 
 # API Keys
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
 ELEVEN_API_KEY = st.secrets.get("ELEVEN_API_KEY")
-genai.configure(api_key=GEMINI_API_KEY)
-# Change this line:
+
+# Root Fix: Use 'rest' transport to avoid 404/GRPC errors on Cloud
+genai.configure(api_key=GEMINI_API_KEY, transport='rest') 
+
 model = genai.GenerativeModel('gemini-1.5-flash') 
 voice_client = ElevenLabs(api_key=ELEVEN_API_KEY)
 
@@ -215,12 +216,18 @@ with tab2:
             
             st.markdown(f'<div style="background: white; border-left: 10px solid #2E7D32; padding: 20px; border-radius: 10px;"><b>Doctor Transcript:</b><br>{response_text}</div>', unsafe_allow_html=True)
             
-            # Audio Generation
+            # Audio Generation (Updated Syntax)
             try:
-                audio = voice_client.generate(text=response_text, voice="Josh", model="eleven_multilingual_v2")
-                st.audio(b"".join(audio), format="audio/mp3", autoplay=True)
-            except: 
-                st.warning("Audio unavailable right now.")
+                audio_gen = voice_client.generate(
+                    text=response_text, 
+                    voice="Josh", 
+                    model="eleven_multilingual_v2"
+                )
+                # Convert generator to bytes for Streamlit
+                audio_bytes = b"".join(list(audio_gen)) 
+                st.audio(audio_bytes, format="audio/mp3", autoplay=True)
+            except Exception as e: 
+                st.warning(f"Audio unavailable: {e}")
             
             st.session_state.typed_text = ""
             
