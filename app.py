@@ -6,6 +6,8 @@ import base64
 from elevenlabs.client import ElevenLabs
 from PIL import Image
 import io
+import os  # <--- Add this
+os.environ["GOOGLE_API_USE_MTLS_ENDPOINT"] = "never"  # <--- Add this
 
 # --- 1. INITIALIZATION & LIVING BRAIN DATABASE ---
 conn = sqlite3.connect('sathi_memory.db', check_same_thread=False)
@@ -24,7 +26,7 @@ if not c.fetchone():
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 ELEVEN_API_KEY = st.secrets.get("ELEVEN_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
-# Remove 'models/' and '-latest' - just use the clean model ID
+# Change this line:
 model = genai.GenerativeModel('gemini-1.5-flash') 
 voice_client = ElevenLabs(api_key=ELEVEN_API_KEY)
 
