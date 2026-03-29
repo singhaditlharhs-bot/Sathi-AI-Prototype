@@ -24,8 +24,8 @@ if not c.fetchone():
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 ELEVEN_API_KEY = st.secrets.get("ELEVEN_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
-# Try this first:
-model = genai.GenerativeModel('models/gemini-1.5-flash-latest') 
+# Remove 'models/' and '-latest' - just use the clean model ID
+model = genai.GenerativeModel('gemini-1.5-flash') 
 voice_client = ElevenLabs(api_key=ELEVEN_API_KEY)
 
 # --- 2. AVATAR DISPLAY FUNCTION (Rectangular) ---
