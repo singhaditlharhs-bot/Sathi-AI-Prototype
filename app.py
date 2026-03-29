@@ -24,6 +24,7 @@ if not c.fetchone():
 
 # API Keys
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
+genai.configure(api_key=GEMINI_API_KEY)
 ELEVEN_API_KEY = st.secrets.get("ELEVEN_API_KEY")
 genai.configure(api_key=GEMINI_API_KEY)
 # Change this line:
