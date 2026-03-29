@@ -55,6 +55,8 @@ _DB_LOCK = threading.Lock()
 def get_db():
     conn = sqlite3.connect("sathi_memory.db", check_same_thread=False)
     conn.execute("PRAGMA journal_mode=WAL")
+
+    # Create tables fresh if they don't exist
     conn.executescript("""
         CREATE TABLE IF NOT EXISTS health_logs (
             id       INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -84,11 +86,32 @@ def get_db():
             duration TEXT
         );
     """)
+
+    # MIGRATION: safely add missing columns to existing tables
+    migrations = [
+        ("health_logs",   "id",      "INTEGER"),
+        ("health_logs",   "summary", "TEXT"),
+        ("reminders",     "id",      "INTEGER"),
+        ("reminders",     "done",    "INTEGER DEFAULT 0"),
+        ("prescriptions", "id",      "INTEGER"),
+        ("prescriptions", "dosage",  "TEXT"),
+        ("prescriptions", "duration","TEXT"),
+    ]
+    for table, col, col_type in migrations:
+        try:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_type}")
+            conn.commit()
+        except Exception:
+            pass  # column already exists — safe to ignore
+
+    # Seed default contacts
     conn.execute(
-        "INSERT OR IGNORE INTO contacts VALUES ('Doctor','Dr. Sharma (AIIMS)','+91-9876543210')"
+        "INSERT OR IGNORE INTO contacts VALUES "
+        "('Doctor','Dr. Sharma (AIIMS)','+91-9876543210')"
     )
     conn.execute(
-        "INSERT OR IGNORE INTO contacts VALUES ('Emergency','Emergency / Ambulance','112')"
+        "INSERT OR IGNORE INTO contacts VALUES "
+        "('Emergency','Emergency / Ambulance','112')"
     )
     conn.commit()
     return conn
