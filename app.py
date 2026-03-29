@@ -26,12 +26,13 @@ if not c.fetchone():
 GEMINI_API_KEY = st.secrets.get("GEMINI_API_KEY")
 ELEVEN_API_KEY = st.secrets.get("ELEVEN_API_KEY")
 
-# Root Fix: Use 'rest' transport to avoid 404/GRPC errors on Cloud
+# FORCE STABLE VERSION: Using 'rest' transport and removing beta 
+# This stops the 404 "models/gemini-1.5-flash not found" error
 genai.configure(api_key=GEMINI_API_KEY, transport='rest') 
 
+# Use the base name without 'models/' prefix
 model = genai.GenerativeModel('gemini-1.5-flash') 
 voice_client = ElevenLabs(api_key=ELEVEN_API_KEY)
-
 # --- 2. AVATAR DISPLAY FUNCTION (Rectangular) ---
 def display_media(file_path, is_video=False):
     try:
