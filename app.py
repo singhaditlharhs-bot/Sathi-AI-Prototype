@@ -4,12 +4,15 @@ import sqlite3
 import google.generativeai as genai
 import base64
 from elevenlabs.client import ElevenLabs
+from PIL import Image
+import io
 
-# --- 1. INITIALIZATION & FUNCTIONS ---
+# --- 1. INITIALIZATION & LIVING BRAIN DATABASE ---
 conn = sqlite3.connect('sathi_memory.db', check_same_thread=False)
 c = conn.cursor()
 c.execute('CREATE TABLE IF NOT EXISTS health_logs (date TEXT, user_input TEXT, ai_response TEXT, tags TEXT)')
 c.execute('CREATE TABLE IF NOT EXISTS contacts (role TEXT, name TEXT, phone TEXT)')
+c.execute('CREATE TABLE IF NOT EXISTS reminders (date TEXT, task TEXT)') # New Alarm Table
 
 # Default Doctor Info
 c.execute("SELECT * FROM contacts WHERE role='Doctor'")
@@ -24,33 +27,34 @@ genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash') 
 voice_client = ElevenLabs(api_key=ELEVEN_API_KEY)
 
-# --- 2. AVATAR DISPLAY FUNCTION ---
+# --- 2. AVATAR DISPLAY FUNCTION (Rectangular) ---
 def display_media(file_path, is_video=False):
     try:
         with open(file_path, "rb") as f:
             data = f.read()
         b64 = base64.b64encode(data).decode()
         
+        # Changed to Rectangular frame as requested
+        style = "border-radius: 15px; border: 6px solid #2E7D32; object-fit: cover; box-shadow: 0 10px 30px rgba(0,0,0,0.3);"
+        
         if is_video:
             st.markdown(f"""
-                <div style="display: flex; justify-content: center; margin-bottom: 10px;">
-                    <video width="220" height="220" autoplay loop muted 
-                    style="border-radius: 50%; border: 6px solid #2E7D32; object-fit: cover; box-shadow: 0 10px 30px rgba(46,125,50,0.4);">
+                <div style="display: flex; justify-content: center; margin-bottom: 15px;">
+                    <video width="300" height="250" autoplay loop muted style="{style}">
                         <source src="data:video/mp4;base64,{b64}" type="video/mp4">
                     </video>
                 </div>
             """, unsafe_allow_html=True)
         else:
             st.markdown(f"""
-                <div style="display: flex; justify-content: center; margin-bottom: 10px;">
-                    <img src="data:image/png;base64,{b64}" width="220" height="220" 
-                    style="border-radius: 50%; border: 6px solid #2E7D32; object-fit: cover; box-shadow: 0 10px 30px rgba(0,0,0,0.2);">
+                <div style="display: flex; justify-content: center; margin-bottom: 15px;">
+                    <img src="data:image/png;base64,{b64}" width="300" height="250" style="{style}">
                 </div>
             """, unsafe_allow_html=True)
     except FileNotFoundError:
-        st.warning(f"File {file_path} not found. Upload it to GitHub!")
+        st.warning(f"File {file_path} not found. Ensure it is in the same folder.")
 
-# --- 3. ADVANCED UI STYLING ---
+# --- 3. ADVANCED 3D UI STYLING ---
 st.set_page_config(page_title="Sathi-AI", layout="wide")
 
 st.markdown("""
@@ -62,46 +66,48 @@ st.markdown("""
         background: linear-gradient(135deg, #1B5E20, #2E7D32); 
         color: white; padding: 20px; border-radius: 20px; 
         text-align: center; margin-bottom: 20px;
-        box-shadow: 0 4px 15px rgba(0,0,0,0.1);
     }
 
-    /* Keyboard Boundary Box */
+    /* 3D Connected Keyboard */
     .kb-boundary {
-        background-color: #E0E0E0;
-        padding: 20px;
-        border-radius: 25px;
-        border: 4px solid #BDBDBD;
-        box-shadow: inset 0 4px 10px rgba(0,0,0,0.1);
+        background-color: #2C3E50;
+        padding: 15px;
+        border-radius: 15px;
+        border: 4px solid #1A252F;
+        box-shadow: inset 0 10px 20px rgba(0,0,0,0.5);
         margin-top: 10px;
     }
+    
+    /* Make columns tighter to look joined */
+    [data-testid="column"] {
+        padding: 0 2px !important; 
+    }
 
-    /* Professional Buttons */
+    /* 3D Keys */
     .stButton>button {
-        background-color: #FFD54F !important;
-        color: #1A1A1A !important;
-        font-weight: 800 !important;
-        border: 2px solid #F57F17 !important;
-        border-radius: 12px !important;
-        height: 60px !important;
-        font-size: 22px !important;
-        transition: all 0.2s ease-in-out;
+        background-color: #E0E0E0 !important;
+        color: #000 !important;
+        font-weight: 900 !important;
+        border-radius: 6px !important;
+        height: 55px !important;
+        font-size: 20px !important;
+        border: 1px solid #999 !important;
+        border-bottom: 6px solid #888 !important; /* 3D Depth */
+        transition: all 0.1s;
+        width: 100% !important;
+        margin-bottom: 5px !important;
     }
-    .stButton>button:hover {
-        transform: scale(1.05);
-        background-color: #FFCA28 !important;
+    .stButton>button:active {
+        transform: translateY(4px); /* Pushes down when clicked */
+        border-bottom: 2px solid #888 !important;
     }
 
-    /* SOS Styling */
-    .sos-btn button {
-        background: linear-gradient(to right, #D32F2F, #B71C1C) !important;
-        color: white !important;
-        border: none !important;
-        font-size: 24px !important;
-    }
+    /* Special Keys Colors */
+    button[title="View fullscreen"] { display: none; } /* Hide image expander */
     </style>
 """, unsafe_allow_html=True)
 
-# --- 4. KEYBOARD LOGIC ---
+# --- 4. STATE LOGIC ---
 if 'typed_text' not in st.session_state: st.session_state.typed_text = ""
 if 'caps' not in st.session_state: st.session_state.caps = True
 if 'is_talking' not in st.session_state: st.session_state.is_talking = False
@@ -109,29 +115,48 @@ if 'is_talking' not in st.session_state: st.session_state.is_talking = False
 def add_char(char): st.session_state.typed_text += char
 def backspace(): st.session_state.typed_text = st.session_state.typed_text[:-1]
 
-# --- 5. DYNAMIC GREETINGS ---
 now = datetime.datetime.now()
-hour = now.hour
-if 5 <= hour < 12: greet = "Pranam Uncle-ji, Shubh Prabhat! ☀️"
-elif 12 <= hour < 17: greet = "Pranam Sir, Shubh Dopahar! 🌤️"
-else: greet = "Shubh Sandhya Uncle-ji! 🌆"
 
-st.markdown(f'<div class="header-card"><h1>{greet}</h1><p>{now.strftime("%I:%M %p")}</p></div>', unsafe_allow_html=True)
+# --- 5. THE INTERFACE ---
+# Tab 1: Simple Bot, Tab 2: Full Doctor Experience, Tab 3: History & Alarms
+tab1, tab2, tab3 = st.tabs(["🤖 Sathi Bot", "👨‍⚕️ Talk to Doctor", "⏰ Alarms & History"])
 
-# --- 6. THE INTERFACE ---
-tab1, tab2, tab3 = st.tabs(["💬 Baat Karein", "📁 Doctor Info", "📜 History"])
-
+# ==========================================
+# TAB 1: SATHI BOT (Simple Text/Speech)
+# ==========================================
 with tab1:
-    # A. AVATAR AREA
+    st.markdown("### 💬 Sathi se baat karein")
+    st.write("Aap hindi ya english mein sawal pooch sakte hain.")
+    
+    bot_input = st.text_input("Aapka Sawal (Your Question):", key="bot_input")
+    if st.button("Poochhein (Ask Sathi)"):
+        with st.spinner("Soch raha hoon..."):
+            resp = model.generate_content(f"You are a helpful bilingual assistant (Hindi/English) for elders. Answer this warmly: {bot_input}")
+            st.success(resp.text)
+
+# ==========================================
+# TAB 2: TALK TO DOCTOR (Avatar, Camera, 3D Keyboard)
+# ==========================================
+with tab2:
+    # A. DOCTOR AVATAR
+    st.markdown("<h2 style='text-align: center;'>Live Clinic</h2>", unsafe_allow_html=True)
     if st.session_state.is_talking:
         display_media("doctor_talking.mp4", is_video=True)
     else:
         display_media("doctor_static.png", is_video=False)
 
-    # B. MESSAGE DISPLAY
-    st.info(st.session_state.typed_text if st.session_state.typed_text else "Likhein ya Camera dikhayein...")
+    # B. SENSORS: CAMERA & MIC
+    col_cam, col_mic = st.columns(2)
+    with col_cam:
+        st.markdown("**📷 Dawai ya Report Dikhayein**")
+        camera_photo = st.camera_input("Take a picture", label_visibility="collapsed")
+    with col_mic:
+        st.markdown("**🎙️ Bol Kar Batayein**")
+        audio_val = st.audio_input("Record your voice", label_visibility="collapsed")
 
-    # C. KEYBOARD WITH BOUNDARY
+    # C. MESSAGE DISPLAY & 3D KEYBOARD
+    st.info(st.session_state.typed_text if st.session_state.typed_text else "Likhne ke liye keyboard dabayein...")
+
     st.markdown('<div class="kb-boundary">', unsafe_allow_html=True)
     keys = [['Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P'],
             ['A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L'],
@@ -141,60 +166,77 @@ with tab1:
         cols = st.columns(len(row))
         for i, key in enumerate(row):
             display_key = key if st.session_state.caps else key.lower()
-            if cols[i].button(display_key, key=f"btn_{display_key}"):
+            if cols[i].button(display_key, key=f"doc_btn_{display_key}"):
                 add_char(display_key)
 
-    col_c, col_s, col_b = st.columns([2, 5, 2])
+    col_c, col_s, col_b, col_ent = st.columns([1.5, 4, 2, 2])
     if col_c.button("⬆️ CAPS"): st.session_state.caps = not st.session_state.caps
     if col_s.button("── SPACE ──"): add_char(" ")
     if col_b.button("⬅️ BACKSPACE"): backspace()
+    
+    # D. THE MAIN ENGINE (ENTER BUTTON)
+    if col_ent.button("✅ ENTER", type="primary"):
+        st.session_state.is_talking = True
+        
+        with st.spinner("Doctor is analyzing..."):
+            prompt = f"""
+            You are Dr. Sathi, a caring Indian doctor. Time: {now.strftime('%I:%M %p')}.
+            1. If there is an image, analyze it (is it a medicine, injury, or prescription?). 
+            2. Tell the user what you see and give advice. 
+            3. If there is a medicine/dosage mentioned, end your response with exactly: ALARM: [Time/Frequency] to take [Medicine].
+            4. Speak warmly in a mix of Hindi and English.
+            User Text: {st.session_state.typed_text}
+            """
+            
+            # Vision Logic: Combine Image and Text for Gemini
+            contents = [prompt]
+            if camera_photo:
+                img = Image.open(camera_photo)
+                contents.append(img)
+                
+            response = model.generate_content(contents)
+            response_text = response.text
+            
+            # Extract Alarm Logic
+            if "ALARM:" in response_text:
+                alarm_part = response_text.split("ALARM:")[1].strip()
+                c.execute("INSERT INTO reminders VALUES (?, ?)", (now.strftime("%Y-%m-%d"), alarm_part))
+                conn.commit()
+                response_text = response_text.split("ALARM:")[0].strip() # Hide the code word from user
+            
+            # Save Transcript
+            c.execute("INSERT INTO health_logs VALUES (?, ?, ?, ?)", 
+                      (now.strftime("%Y-%m-%d %H:%M"), "Used Camera/Keyboard", response_text, "Doctor Visit"))
+            conn.commit()
+            
+            st.markdown(f'<div style="background: white; border-left: 10px solid #2E7D32; padding: 20px; border-radius: 10px;"><b>Doctor Transcript:</b><br>{response_text}</div>', unsafe_allow_html=True)
+            
+            # Audio Generation
+            try:
+                audio = voice_client.generate(text=response_text, voice="Josh", model="eleven_multilingual_v2")
+                st.audio(b"".join(audio), format="audio/mp3", autoplay=True)
+            except: 
+                st.warning("Audio unavailable right now.")
+            
+            st.session_state.typed_text = ""
+            
     st.markdown('</div>', unsafe_allow_html=True)
 
+# ==========================================
+# TAB 3: ALARMS & HISTORY
+# ==========================================
+with tab3:
+    st.subheader("⏰ Reminders (Dawaii ka Samay)")
+    alarms = c.execute("SELECT * FROM reminders").fetchall()
+    if alarms:
+        for a in alarms:
+            st.info(f"📅 **{a[0]}:** {a[1]}")
+    else:
+        st.write("Koi naya reminder nahi hai.")
+        
     st.divider()
     
-    # D. ACTION BRIDGE
-    col_send, col_sos = st.columns(2)
-    
-    if col_send.button("✅ BHEJEIN (SEND)"):
-        if st.session_state.typed_text:
-            st.session_state.is_talking = True
-            with st.spinner("Sathi sun raha hai..."):
-                persona = f"You are Sathi, a caring son and doctor. Use 'Aap'. Time: {now.strftime('%I:%M %p')}"
-                response = model.generate_content([persona, st.session_state.typed_text])
-                
-                # Database Log
-                c.execute("INSERT INTO health_logs VALUES (?, ?, ?, ?)", 
-                          (now.strftime("%Y-%m-%d %H:%M"), st.session_state.typed_text, response.text, "Chat"))
-                conn.commit()
-                
-                st.markdown(f'<div style="background: white; border-left: 10px solid #2E7D32; padding: 20px; border-radius: 15px;"><b>Dr. Sathi:</b><br>{response.text}</div>', unsafe_allow_html=True)
-                
-                try:
-                    audio = voice_client.generate(text=response.text, voice="Josh", model="eleven_multilingual_v2")
-                    st.audio(b"".join(audio), format="audio/mp3", autoplay=True)
-                except: st.warning("Audio unavailable.")
-                
-                st.session_state.typed_text = ""
-                # To reset talking state after response, you can use a timer or manual button
-                # For now, it stays talking until next interaction
-
-    with col_sos:
-        if st.button("🆘 EMERGENCY", key="sos_btn"):
-            doc_info = c.execute("SELECT name, phone FROM contacts WHERE role='Doctor'").fetchone()
-            st.error(f"🚨 Calling {doc_info[0]} at {doc_info[1]}")
-
-# Rest of tabs remain same...
-with tab2:
-    st.subheader("🏥 Doctor ki Jankari")
-    d_name = st.text_input("Doctor Name:", value="Dr. Sharma (AIIMS)")
-    d_phone = st.text_input("Doctor Phone:", value="+91 9876543210")
-    if st.button("Save Info"):
-        c.execute("UPDATE contacts SET name=?, phone=? WHERE role='Doctor'", (d_name, d_phone))
-        conn.commit()
-        st.success("Jankari save ho gayi!")
-
-with tab3:
-    st.subheader("📜 History")
-    logs = c.execute("SELECT * FROM health_logs ORDER BY date DESC").fetchall()
+    st.subheader("📜 Purani Baatein (History)")
+    logs = c.execute("SELECT * FROM health_logs ORDER BY date DESC LIMIT 5").fetchall()
     for log in logs:
-        st.write(f"**[{log[0]}]** Aap: {log[1]} | Sathi: {log[2]}")
+        st.write(f"**[{log[0]}]** \n* Sathi: {log[2]}")
