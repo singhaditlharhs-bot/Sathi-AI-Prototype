@@ -27,6 +27,7 @@ import streamlit as st
 import datetime
 import sqlite3
 import threading
+import time
 import base64
 import io
 
@@ -140,35 +141,48 @@ def get_voice():
 # ─────────────────────────────────────────────────────────────────────────────
 # 4. GEMINI CALL  (text + optional vision or audio)
 # ─────────────────────────────────────────────────────────────────────────────
-def call_gemini(prompt: str, pil_image=None) -> str:
+def call_gemini(prompt: str, pil_image=None, retries: int = 3) -> str:
     client = get_gemini()
     parts = []
     if pil_image:
         buf = io.BytesIO()
         pil_image.save(buf, format="JPEG", quality=85)
-        parts.append(types.Part.from_bytes(data=buf.getvalue(), mime_type="image/jpeg"))
+        parts.append(types.Part.from_bytes(
+            data=buf.getvalue(), mime_type="image/jpeg"
+        ))
     parts.append(types.Part.from_text(text=prompt))
-    resp = client.models.generate_content(
-        model=GEMINI_MDL,
-        contents=parts,
-        config=types.GenerateContentConfig(max_output_tokens=1500, temperature=0.7),
-    )
-    return resp.text.strip()
 
+    for attempt in range(retries):
+        try:
+            resp = client.models.generate_content(
+                model=GEMINI_MDL,
+                contents=parts,
+                config=types.GenerateContentConfig(
+                    max_output_tokens=1500, temperature=0.7
+                ),
+            )
+            st.session_state.last_api_call = time.time()
+            return resp.text.strip()
 
-def transcribe_audio(audio_bytes: bytes) -> str:
-    client = get_gemini()
-    resp = client.models.generate_content(
-        model=GEMINI_MDL,
-        contents=[
-            types.Part.from_bytes(data=audio_bytes, mime_type="audio/wav"),
-            types.Part.from_text(text="Transcribe exactly what is said in this audio clip."),
-        ],
-        config=types.GenerateContentConfig(max_output_tokens=300),
-    )
-    return resp.text.strip()
-
-
+        except Exception as e:
+            err = str(e)
+            if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                if attempt < retries - 1:
+                    wait = 10 * (attempt + 1)   # 10s, 20s, 30s
+                    st.warning(
+                        f"⏳ Gemini busy hai, {wait} second mein retry ho raha hai... "
+                        f"(Attempt {attempt+1}/{retries})"
+                    )
+                    time.sleep(wait)
+                else:
+                    st.error(
+                        "⚠️ Abhi bahut requests aa rahi hain. "
+                        "Thodi der baad dobara try karein. 🙏"
+                    )
+                    return "Maafi chahta hoon, abhi server busy hai. Kuch minute baad try karein."
+            else:
+                raise   # non-quota errors bubble up normally
+    return ""
 # ─────────────────────────────────────────────────────────────────────────────
 # 5. TTS
 # ─────────────────────────────────────────────────────────────────────────────
@@ -463,6 +477,7 @@ for k, v in {
     "typed": "", "caps": True, "talking": False,
     "lang": "hinglish", "last_audio": None,
     "last_reply": "", "last_summary": "",
+    "last_api_call": 0,
 }.items():
     if k not in st.session_state:
         st.session_state[k] = v
@@ -531,6 +546,11 @@ with tab1:
         st.markdown('</div>', unsafe_allow_html=True)
 
     audio_bot = st.audio_input("🎙️ Ya yahan bolein:", key="ab")
+
+    elapsed = time.time() - st.session_state.last_api_call
+    if elapsed < 3:
+        st.warning("Thoda ruko... 🙏")
+        st.stop()
 
     if ask or audio_bot:
         query = bot_q.strip()
@@ -664,6 +684,11 @@ with tab2:
     st.markdown('</div>', unsafe_allow_html=True)  # close kb-wrap
 
     # ── SEND LOGIC ─────────────────────────────────────────────────────────
+    elapsed = time.time() - st.session_state.last_api_call
+    if elapsed < 3:
+        st.warning("Thoda ruko... 🙏")
+        st.stop()
+
     if send_clicked:
         user_text = st.session_state.typed.strip()
         pil_img   = None
