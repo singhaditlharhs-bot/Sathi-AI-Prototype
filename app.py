@@ -32,7 +32,8 @@ import base64
 import io
  
 from PIL import Image
-from openai import OpenAI           # xAI uses OpenAI-compatible SDK
+from openai import OpenAI
+from groq import Groq  # xAI uses OpenAI-compatible SDK
 from elevenlabs.client import ElevenLabs
  
 # ─────────────────────────────────────────────────────────────────────────────
@@ -126,11 +127,150 @@ TEXT_MODEL   = "grok-3-mini"
 VISION_MODEL = "grok-2-vision-1212"
  
  
+# Add after your existing API setup lines
+GROQ_KEY   = st.secrets.get("GROQ_API_KEY", "")
+GROQ_MODEL = "llama-3.3-70b-versatile"   # free, fast, no rate issues
+
 @st.cache_resource
-def get_xai():
-    return OpenAI(
-        api_key=XAI_KEY,
-        base_url="https://api.x.ai/v1",   # ← only change needed vs OpenAI
+def get_groq():
+    return Groq(api_key=GROQ_KEY)
+
+
+def call_ai(prompt: str, system: str = "", pil_image=None, retries: int = 2) -> str:
+    """
+    Priority order:
+    1. xAI grok-2-vision  — if image present
+    2. xAI grok-2         — text, primary
+    3. Groq llama-3.3     — fallback if xAI busy
+    """
+    client = get_xai()
+
+    full_system = system
+    if SATHI_KNOWLEDGE.strip():
+        full_system = (
+            system
+            + "\n\n[INTERNAL KNOWLEDGE — use this silently]\n"
+            + SATHI_KNOWLEDGE
+        )
+
+    # ── IMAGE → xAI Vision (only xAI has vision free) ──
+    if pil_image:
+        buf = io.BytesIO()
+        pil_image.save(buf, format="JPEG", quality=85)
+        img_b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
+        content = [
+            {"type": "image_url",
+             "image_url": {"url": f"data:image/jpeg;base64,{img_b64}", "detail": "high"}},
+            {"type": "text", "text": prompt},
+        ]
+        messages = []
+        if full_system:
+            messages.append({"role": "system", "content": full_system})
+        messages.append({"role": "user", "content": content})
+        try:
+            resp = client.chat.completions.create(
+                model="grok-2-vision-1212",
+                messages=messages,
+                max_tokens=1500,
+                temperature=0.7,
+            )
+            st.session_state.last_api_call = time.time()
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            st.warning(f"📷 Image analysis mein dikkat: {e}")
+            return "Photo analyse nahi ho paya. Dobara try karein ya likha ke batayein."
+
+    # ── TEXT → Try xAI first, then Groq fallback ──
+    messages = []
+    if full_system:
+        messages.append({"role": "system", "content": full_system})
+    messages.append({"role": "user", "content": prompt})
+
+    # Try xAI
+    for attempt in range(retries):
+        try:
+            resp = client.chat.completions.create(
+                model="grok-2",
+                messages=messages,
+                max_tokens=1500,
+                temperature=0.7,
+            )
+            st.session_state.last_api_call = time.time()
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            err = str(e)
+            if "429" in err or "rate_limit" in err.lower() or "busy" in err.lower():
+                if attempt < retries - 1:
+                    time.sleep(5)
+                    continue
+                # xAI busy — silently switch to Groq
+                break
+            else:
+                break   # non-rate error, go to Groq anyway
+
+    # Groq fallback — runs silently, user never knows
+    if GROQ_KEY:
+        try:
+            groq_client = get_groq()
+            resp = groq_client.chat.completions.create(
+                model=GROQ_MODEL,
+                messages=messages,
+                max_tokens=1500,
+                temperature=0.7,
+            )
+            st.session_state.last_api_call = time.time()
+            return resp.choices[0].message.content.strip()
+        except Exception as e2:
+            pass   # both failed
+
+    # Both APIs failed — return cached answer if available
+    return get_cached_answer(prompt)
+
+
+def get_cached_answer(prompt: str) -> str:
+    """Last resort — common health questions answered from built-in cache."""
+    prompt_lower = prompt.lower()
+    cache = {
+        ("sar", "sir", "headache", "dard"): (
+            "Sar dard ke liye: thoda paani pijiye, andheri jagah mein lete jayein, "
+            "Paracetamol 500mg le sakte hain. Agar 2 din se zyada ho ya bahut tej ho "
+            "toh doctor se zaroor milein. 🙏"
+        ),
+        ("bukhar", "fever", "temperature", "garmi"): (
+            "Bukhar mein: paani aur nimbu paani pijiye, "
+            "Paracetamol 500mg baar baar le sakte hain. "
+            "103°F se zyada ho toh doctor ko turant dikhayein. 🙏"
+        ),
+        ("bp", "blood pressure", "tension", "hypertension"): (
+            "BP ke liye: namak kam khayen, tension na lein, "
+            "dawai waqt par lein. Agar chakkar aa rahe hain ya sar bahut dard kar raha hai "
+            "toh seedha doctor ke paas jayein. 🙏"
+        ),
+        ("sugar", "diabetes", "madhumeh"): (
+            "Sugar ke liye: meetha band karein, waqt par khaana khayen, "
+            "dawai kabhi mat bhoolein. Regular check karwate rahein. 🙏"
+        ),
+        ("pet", "stomach", "pait", "acidity", "gas"): (
+            "Pet dard ya acidity ke liye: halka khaana khayen, "
+            "masaledar cheezein kam karein. Antacid le sakte hain. "
+            "Agar 2 din se zyada ho toh doctor se milein. 🙏"
+        ),
+        ("neend", "sleep", "insomnia", "so nahi"): (
+            "Neend na aane par: raat ko chai/coffee mat pijiye, "
+            "sone se pehle halka garam doodh pijiye, "
+            "phone band kar ke lete jayein. 🙏"
+        ),
+        ("ghabrahat", "anxiety", "chinta", "tension"): (
+            "Ghabrahat mein: gehri saansen lijiye — naak se andar, muh se baahir. "
+            "Kisi apne se baat karein. Akele mat rahein. 🙏"
+        ),
+    }
+    for keywords, answer in cache.items():
+        if any(kw in prompt_lower for kw in keywords):
+            return answer + "\n\n_(Note:  Yeh general advice hai. Doctor se zaroor milein)_"
+
+    return (
+        "Emergency mein 112 call karein. 🙏"
     )
  
  
